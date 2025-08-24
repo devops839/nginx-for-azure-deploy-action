@@ -1,6 +1,5 @@
 name: "NGINX Configuration Sync"
 description: "Sync NGINX configuration from a git repo and/or certificates from an Azure Key Vault to an NGINXaaS for Azure deployment"
-
 inputs:
   subscription-id:
     description: "The Azure subscription ID of the NGINXaaS for Azure deployment."
@@ -28,44 +27,24 @@ inputs:
     required: false
     default: ""
   nginx-certificates:
-    description: 'An array of JSON objects each with keys nginx_cert_name, keyvault_secret, certificate_virtual_path and key_virtual_path.'
+    description: 'An array of JSON objects each with keys nginx_cert_name, keyvault_secret, certificate_virtual_path and key_virtual_path. Example: [{"certificateName": "server1", "keyvaultSecret": "https://...", "certificateVirtualPath": "/etc/nginx/certs/server1.crt", "keyVirtualPath": "/etc/nginx/certs/server1.key"  }, {"name": "server2", "keyvaultSecret": "https://...", "certificateVirtualPath": "/etc/nginx/certs/server2.crt", "keyVirtualPath": "/etc/nginx/certs/server2.key"  }] '
     required: false
   protected-files:
-    description: "Comma-separated list of file paths relative to nginx-config-directory-path that should be marked as protected."
+    description: "Comma-separated list of file paths relative to nginx-config-directory-path that should be marked as protected. Example: 'ssl/private.key,conf.d/secrets.conf'"
     required: false
     default: ""
   debug:
     description: "Enable/Disable debug output."
     required: false
     default: "false"
-  dry-run:
-    description: "Run NGINX configuration validation only (non-blocking)."
-    required: false
-    default: "false"
-
 runs:
   using: "composite"
   steps:
     - name: "Synchronize NGINX certificate(s) from the Git repository to an NGINXaaS for Azure deployment"
-      run: ${{github.action_path}}/src/deploy-certificate.sh \
-        --subscription-id=${{ inputs.subscription-id }} \
-        --resource-group-name=${{ inputs.resource-group-name }} \
-        --nginx-deployment-name=${{ inputs.nginx-deployment-name }} \
-        --certificates=${{ toJSON(inputs.nginx-certificates) }} \
-        --debug=${{ inputs.debug }}
+      run: ${{github.action_path}}/src/deploy-certificate.sh --subscription-id=${{ inputs.subscription-id }} --resource-group-name=${{ inputs.resource-group-name }} --nginx-deployment-name=${{ inputs.nginx-deployment-name }} --certificates=${{ toJSON(inputs.nginx-certificates) }} --debug=${{ inputs.debug }}
       if: ${{ inputs.nginx-certificates != '' }}
       shell: bash
-
-    - name: "Synchronize/Validate NGINX configuration"
-      run: ${{github.action_path}}/src/deploy-config.sh \
-        --subscription-id=${{ inputs.subscription-id }} \
-        --resource-group-name=${{ inputs.resource-group-name }} \
-        --nginx-deployment-name=${{ inputs.nginx-deployment-name }} \
-        --nginx-config-directory-path=${{ inputs.nginx-config-directory-path }} \
-        --nginx-root-config-file=${{ inputs.nginx-root-config-file }} \
-        --transformed-nginx-config-directory-path=${{ inputs.transformed-nginx-config-directory-path }} \
-        --protected-files=${{ inputs.protected-files }} \
-        --debug=${{ inputs.debug }} \
-        --dry-run=${{ inputs.dry-run }}
+    - name: "Synchronize NGINX configuration from the Git repository to an NGINXaaS for Azure deployment"
+      run: ${{github.action_path}}/src/deploy-config.sh --subscription-id=${{ inputs.subscription-id }} --resource-group-name=${{ inputs.resource-group-name }} --nginx-deployment-name=${{ inputs.nginx-deployment-name }} --nginx-config-directory-path=${{ inputs.nginx-config-directory-path }} --nginx-root-config-file=${{ inputs.nginx-root-config-file }} --transformed-nginx-config-directory-path=${{ inputs.transformed-nginx-config-directory-path }} --protected-files=${{ inputs.protected-files }} --debug=${{ inputs.debug }}
       if: ${{ inputs.nginx-config-directory-path != '' }}
       shell: bash
