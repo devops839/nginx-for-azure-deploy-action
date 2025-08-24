@@ -3,7 +3,7 @@ name: NGINX Config Dry Run
 on:
   pull_request:
     paths:
-      - "test/configs/**"   # ✅ trigger on any change under test/configs
+      - "test/configs/**"
 
 jobs:
   nginx-dry-run:
@@ -17,14 +17,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nginx
 
-      - name: Run NGINX config dry-run for all configs
-        continue-on-error: true   # ✅ non-blocking
+      - name: Copy proxy.conf to /etc/nginx/conf.d/
         run: |
-          echo "Running nginx -t for all configs under test/configs" | tee nginx-dry-run.log
-          CONF_FILES=$(find "$GITHUB_WORKSPACE/test/configs" -type f -name "*.conf")
+          sudo mkdir -p /etc/nginx/conf.d
+          sudo cp test/configs/multi/conf.d/proxy.conf /etc/nginx/conf.d/proxy.conf
+
+      - name: Run NGINX config dry-run for main config files
+        continue-on-error: true
+        run: |
+          echo "Running nginx -t for main config files under test/configs" | tee nginx-dry-run.log
+          CONF_FILES=$(find "$GITHUB_WORKSPACE/test/configs" -type f -name "nginx.conf")
 
           if [ -z "$CONF_FILES" ]; then
-            echo "No .conf files found under test/configs" | tee -a nginx-dry-run.log
+            echo "No main nginx.conf files found under test/configs" | tee -a nginx-dry-run.log
           else
             for file in $CONF_FILES; do
               echo "---------------------------------" | tee -a nginx-dry-run.log
@@ -34,7 +39,7 @@ jobs:
           fi
 
       - name: Upload dry-run results
-        if: always()   # ✅ always upload log even on errors
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nginx-dry-run-report
