@@ -24,7 +24,7 @@ jobs:
 
       - name: Upload dry-run logs
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: nginx-dry-run-report
           path: dry-run.log
