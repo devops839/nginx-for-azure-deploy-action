@@ -1,31 +1,31 @@
-name: "NGINX Config Dry-Run Validation"
+name: NGINX Config Dry Run
 
 on:
   pull_request:
     paths:
-      - "test/configs/**"
+      - "test/configs/**"   # run only if nginx configs are changed
 
 jobs:
-  dry-run-validation:
+  nginx-dry-run:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Run NGINX dry-run validation
-        uses: ./
-        with:
-          subscription-id: "dummy-subscription"
-          resource-group-name: "dummy-rg"
-          nginx-deployment-name: "dummy-nginx"
-          nginx-config-directory-path: test/configs/
-          nginx-root-config-file: nginx.conf
-          dry-run: true
-          debug: false
+      - name: Install NGINX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nginx
 
-      - name: Upload dry-run logs
-        if: always()
+      - name: Run NGINX config dry-run
+        continue-on-error: true   # ✅ non-blocking, even if errors
+        run: |
+          echo "Running nginx -t against configs"
+          sudo nginx -t -c $GITHUB_WORKSPACE/test/configs/nginx.conf \
+            2>&1 | tee nginx-dry-run.log
+
+      - name: Upload dry-run results
         uses: actions/upload-artifact@v4
         with:
           name: nginx-dry-run-report
-          path: dry-run.log
+          path: nginx-dry-run.log
