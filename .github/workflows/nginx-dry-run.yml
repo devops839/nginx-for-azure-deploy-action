@@ -3,7 +3,7 @@ name: NGINX Config Dry Run
 on:
   pull_request:
     paths:
-      - "test/configs/**"   # run only if nginx configs are changed
+      - "test/configs/**"   # ✅ trigger on any change under test/configs
 
 jobs:
   nginx-dry-run:
@@ -17,14 +17,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nginx
 
-      - name: Run NGINX config dry-run
-        continue-on-error: true   # ✅ non-blocking, even if errors
+      - name: Run NGINX config dry-run for all configs
+        continue-on-error: true   # ✅ non-blocking
         run: |
-          echo "Running nginx -t against configs"
-          sudo nginx -t -c $GITHUB_WORKSPACE/test/configs/nginx.conf \
-            2>&1 | tee nginx-dry-run.log
+          echo "Running nginx -t for all configs under test/configs" | tee nginx-dry-run.log
+          CONF_FILES=$(find "$GITHUB_WORKSPACE/test/configs" -type f -name "*.conf")
+
+          if [ -z "$CONF_FILES" ]; then
+            echo "No .conf files found under test/configs" | tee -a nginx-dry-run.log
+          else
+            for file in $CONF_FILES; do
+              echo "---------------------------------" | tee -a nginx-dry-run.log
+              echo "Validating: $file" | tee -a nginx-dry-run.log
+              sudo nginx -t -c "$file" 2>&1 | tee -a nginx-dry-run.log
+            done
+          fi
 
       - name: Upload dry-run results
+        if: always()   # ✅ always upload log even on errors
         uses: actions/upload-artifact@v4
         with:
           name: nginx-dry-run-report
