@@ -6,7 +6,7 @@ on:
       - "test/configs/**"  # Trigger only when config files are changed
 
 env:
-  DRY_RUN_ENABLED: "false"  # Set to "false" to disable dry-run; change to "true" to enable
+  DRY_RUN_ENABLED: "true"  # Set to "false" to disable dry-run; change to "true" to enable
 
 jobs:
   nginx-dry-run:
