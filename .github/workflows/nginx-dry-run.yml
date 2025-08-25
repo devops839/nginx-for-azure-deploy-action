@@ -3,37 +3,34 @@ name: NGINX Config Dry Run
 on:
   pull_request:
     paths:
-      - "test/configs/**"  # Trigger only when config files are changed
+      - "test/configs/**"   # ✅ trigger on any change under test/configs
 
 env:
-  DRY_RUN_ENABLED: "true"  # Set to "false" to disable dry-run; change to "true" to enable
+  DRY_RUN_ENABLED: "true"   # ✅ Toggle this to "false" to disable dry-run
 
 jobs:
   nginx-dry-run:
-    if: env.DRY_RUN_ENABLED == 'true'  # This condition prevents the job from running when disabled
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install NGINX
+        if: env.DRY_RUN_ENABLED == 'true'   # ✅ Only install if dry-run is enabled
         run: |
           sudo apt-get update
           sudo apt-get install -y nginx
 
-      - name: Copy proxy.conf to /etc/nginx/conf.d/
+      - name: Run NGINX config dry-run for all configs
+        if: env.DRY_RUN_ENABLED == 'true'   # ✅ Only run dry-run if enabled
+        continue-on-error: true             # ✅ Non-blocking
         run: |
-          sudo mkdir -p /etc/nginx/conf.d
-          sudo cp test/configs/multi/conf.d/proxy.conf /etc/nginx/conf.d/proxy.conf
-
-      - name: Run NGINX config dry-run for main config files
-        continue-on-error: true   # Won’t fail the PR if config is broken
-        run: |
-          echo "Running nginx -t for main config files under test/configs" | tee nginx-dry-run.log
-          CONF_FILES=$(find "$GITHUB_WORKSPACE/test/configs" -type f -name "nginx.conf")
+          echo "Running nginx -t for all configs under test/configs" | tee nginx-dry-run.log
+          CONF_FILES=$(find "$GITHUB_WORKSPACE/test/configs" -type f -name "*.conf")
 
           if [ -z "$CONF_FILES" ]; then
-            echo "No main nginx.conf files found under test/configs" | tee -a nginx-dry-run.log
+            echo "No .conf files found under test/configs" | tee -a nginx-dry-run.log
           else
             for file in $CONF_FILES; do
               echo "---------------------------------" | tee -a nginx-dry-run.log
@@ -43,5 +40,8 @@ jobs:
           fi
 
       - name: Upload dry-run results
-        if: always()   # Ensures logs are uploaded even on failure
+        if: env.DRY_RUN_ENABLED == 'true' || always()   # ✅ Upload log if dry-run was run OR always
         uses: actions/upload-artifact@v4
+        with:
+          name: nginx-dry-run-report
+          path: nginx-dry-run.log
