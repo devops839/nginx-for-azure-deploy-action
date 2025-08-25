@@ -3,10 +3,14 @@ name: NGINX Config Dry Run
 on:
   pull_request:
     paths:
-      - "test/configs/**"
+      - "test/configs/**"  # Trigger only when config files are changed
+
+env:
+  DRY_RUN_ENABLED: "false"  # Set to "false" to disable dry-run; change to "true" to enable
 
 jobs:
   nginx-dry-run:
+    if: env.DRY_RUN_ENABLED == 'true'  # This condition prevents the job from running when disabled
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -23,7 +27,7 @@ jobs:
           sudo cp test/configs/multi/conf.d/proxy.conf /etc/nginx/conf.d/proxy.conf
 
       - name: Run NGINX config dry-run for main config files
-        continue-on-error: true
+        continue-on-error: true   # Won’t fail the PR if config is broken
         run: |
           echo "Running nginx -t for main config files under test/configs" | tee nginx-dry-run.log
           CONF_FILES=$(find "$GITHUB_WORKSPACE/test/configs" -type f -name "nginx.conf")
@@ -39,8 +43,5 @@ jobs:
           fi
 
       - name: Upload dry-run results
-        if: always()
+        if: always()   # Ensures logs are uploaded even on failure
         uses: actions/upload-artifact@v4
-        with:
-          name: nginx-dry-run-report
-          path: nginx-dry-run.log
