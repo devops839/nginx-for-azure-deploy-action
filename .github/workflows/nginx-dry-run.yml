@@ -21,7 +21,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nginx
-
+          
+      - name: Copy proxy.conf to /etc/nginx/conf.d/
+        run: |
+          sudo mkdir -p /etc/nginx/conf.d
+          sudo cp test/configs/multi/conf.d/proxy.conf /etc/nginx/conf.d/proxy.conf
+          
       - name: Run NGINX config dry-run for all configs
         if: env.DRY_RUN_ENABLED == 'true'   # ✅ Only run dry-run if enabled
         continue-on-error: true             # ✅ Non-blocking
