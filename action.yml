@@ -27,7 +27,18 @@ inputs:
     required: false
     default: ""
   nginx-certificates:
-    description: 'An array of JSON objects each with keys nginx_cert_name, keyvault_secret, certificate_virtual_path and key_virtual_path. Example: [{"certificateName": "server1", "keyvaultSecret": "https://...", "certificateVirtualPath": "/etc/nginx/certs/server1.crt", "keyVirtualPath": "/etc/nginx/certs/server1.key"  }, {"name": "server2", "keyvaultSecret": "https://...", "certificateVirtualPath": "/etc/nginx/certs/server2.crt", "keyVirtualPath": "/etc/nginx/certs/server2.key"  }] '
+    description: >
+      Certificates **in YAML (or JSON)**. Prefer YAML list of maps with keys:
+      certificateName, keyvaultSecret, certificateVirtualPath, keyVirtualPath.
+      Example (YAML):
+        - certificateName: server1
+          keyvaultSecret: https://example.vault.azure.net/secrets/server1/abc123
+          certificateVirtualPath: /etc/nginx/certs/server1.crt
+          keyVirtualPath: /etc/nginx/certs/server1.key
+        - certificateName: server2
+          keyvaultSecret: https://example.vault.azure.net/secrets/server2/def456
+          certificateVirtualPath: /etc/nginx/certs/server2.crt
+          keyVirtualPath: /etc/nginx/certs/server2.key
     required: false
   protected-files:
     description: "Comma-separated list of file paths relative to nginx-config-directory-path that should be marked as protected. Example: 'ssl/private.key,conf.d/secrets.conf'"
@@ -37,14 +48,55 @@ inputs:
     description: "Enable/Disable debug output."
     required: false
     default: "false"
+
 runs:
   using: "composite"
   steps:
-    - name: "Synchronize NGINX certificate(s) from the Git repository to an NGINXaaS for Azure deployment"
-      run: ${{github.action_path}}/src/deploy-certificate.sh --subscription-id=${{ inputs.subscription-id }} --resource-group-name=${{ inputs.resource-group-name }} --nginx-deployment-name=${{ inputs.nginx-deployment-name }} --certificates=${{ toJSON(inputs.nginx-certificates) }} --debug=${{ inputs.debug }}
+    # If certificates were provided, normalize YAML/JSON -> compact JSON for the shell script
+    - name: Normalize certificates input (YAML/JSON ➜ JSON)
+      id: certs
       if: ${{ inputs.nginx-certificates != '' }}
       shell: bash
+      run: |
+        set -euo pipefail
+        echo "▶ Writing raw certificates input to certs.yaml"
+        printf "%s\n" "${{ inputs.nginx-certificates }}" > certs.yaml
+
+        echo "▶ Downloading yq (static binary)"
+        case "$(uname -s)" in
+          Linux)  YQ_URL="https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64" ;;
+          Darwin) YQ_URL="https://github.com/mikefarah/yq/releases/latest/download/yq_darwin_amd64" ;;
+          *) echo "Unsupported OS"; exit 1 ;;
+        esac
+        curl -sSLf "$YQ_URL" -o yq
+        chmod +x yq
+
+        echo "▶ Converting input to JSON (yq -o=json)"
+        ./yq -o=json '.' certs.yaml > certs.json
+
+        # Compact to one line for safe CLI passing
+        CERTS_JSON="$(tr -d '\n' < certs.json)"
+        echo "json=$CERTS_JSON" >> "$GITHUB_OUTPUT"
+
+    - name: "Synchronize NGINX certificate(s) from the Git repository to an NGINXaaS for Azure deployment"
+      if: ${{ inputs.nginx-certificates != '' }}
+      shell: bash
+      run: ${{ github.action_path }}/src/deploy-certificate.sh \
+           --subscription-id=${{ inputs.subscription-id }} \
+           --resource-group-name=${{ inputs.resource-group-name }} \
+           --nginx-deployment-name=${{ inputs.nginx-deployment-name }} \
+           --certificates='${{ steps.certs.outputs.json }}' \
+           --debug=${{ inputs.debug }}
+
     - name: "Synchronize NGINX configuration from the Git repository to an NGINXaaS for Azure deployment"
-      run: ${{github.action_path}}/src/deploy-config.sh --subscription-id=${{ inputs.subscription-id }} --resource-group-name=${{ inputs.resource-group-name }} --nginx-deployment-name=${{ inputs.nginx-deployment-name }} --nginx-config-directory-path=${{ inputs.nginx-config-directory-path }} --nginx-root-config-file=${{ inputs.nginx-root-config-file }} --transformed-nginx-config-directory-path=${{ inputs.transformed-nginx-config-directory-path }} --protected-files=${{ inputs.protected-files }} --debug=${{ inputs.debug }}
       if: ${{ inputs.nginx-config-directory-path != '' }}
       shell: bash
+      run: ${{ github.action_path }}/src/deploy-config.sh \
+           --subscription-id=${{ inputs.subscription-id }} \
+           --resource-group-name=${{ inputs.resource-group-name }} \
+           --nginx-deployment-name=${{ inputs.nginx-deployment-name }} \
+           --nginx-config-directory-path=${{ inputs.nginx-config-directory-path }} \
+           --nginx-root-config-file=${{ inputs.nginx-root-config-file }} \
+           --transformed-nginx-config-directory-path=${{ inputs.transformed-nginx-config-directory-path }} \
+           --protected-files=${{ inputs.protected-files }} \
+           --debug=${{ inputs.debug }}
