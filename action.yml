@@ -1,49 +1,63 @@
 name: "NGINX Configuration Sync"
 description: "Sync NGINX configuration from a git repo and/or certificates from an Azure Key Vault to an NGINXaaS for Azure deployment"
+
 inputs:
   subscription-id:
     description: "The Azure subscription ID of the NGINXaaS for Azure deployment."
     required: true
+
   resource-group-name:
     description: "The resource group of the NGINXaaS for Azure deployment."
     required: true
+
   nginx-deployment-name:
     description: "The name of the NGINXaaS for Azure deployment."
     required: true
+
   nginx-config-directory-path:
     description: 'The NGINX configuration directory path relative to the root of the Git repository, example: "config/".'
     required: false
+
   nginx-root-config-file:
     description: >
       'The root NGINX configuration file path relative to the NGINX configuration directory in the Git repository, example: "nginx.conf".'
     required: false
     default: "nginx.conf"
+
   transformed-nginx-config-directory-path:
     description: >
-      'The absolute directory path in the NGINXaaS for Azure deployment where your configuration files will be placed. 
-      All files found in the nginx-config-directory-path will be copied to this location in the deployment. 
+      'The absolute directory path in the NGINXaaS for Azure deployment where your configuration files will be placed.
+      All files found in the nginx-config-directory-path will be copied to this location in the deployment.
       For example, use "/etc/nginx/" to match the standard NGINX directory structure on your NGINXaaS deployment.
       If your NGINX configuration files use absolute paths in "include" directives, this setting ensures those paths are correctly mapped in the deployment by prepending the specified directory.'
     required: false
     default: ""
+
   nginx-certificates:
     description: >
-      Certificates **in YAML (or JSON)**. Prefer YAML list of maps with keys:
-      certificateName, keyvaultSecret, certificateVirtualPath, keyVirtualPath.
-      Example (YAML):
-        - certificateName: server1
-          keyvaultSecret: https://example.vault.azure.net/secrets/server1/abc123
-          certificateVirtualPath: /etc/nginx/certs/server1.crt
-          keyVirtualPath: /etc/nginx/certs/server1.key
-        - certificateName: server2
-          keyvaultSecret: https://example.vault.azure.net/secrets/server2/def456
-          certificateVirtualPath: /etc/nginx/certs/server2.crt
-          keyVirtualPath: /etc/nginx/certs/server2.key
+      Certificates to sync. Accepts EITHER:
+        (a) a JSON array string (backward-compatible), e.g.:
+            [{"certificateName":"server1","keyvaultSecret":"https://...","certificateVirtualPath":"/etc/nginx/certs/server1.crt","keyVirtualPath":"/etc/nginx/certs/server1.key"}]
+        OR
+        (b) a YAML list (recommended), e.g.:
+            - certificateName: server1
+              keyvaultSecret: https://...
+              certificateVirtualPath: /etc/nginx/certs/server1.crt
+              keyVirtualPath: /etc/nginx/certs/server1.key
+      Each item must include: certificateName, keyvaultSecret, certificateVirtualPath, keyVirtualPath.
     required: false
+    default: ""
+
+  certificates-format:
+    description: 'Force parser for nginx-certificates: "yaml", "json", or "auto" (default).'
+    required: false
+    default: "auto"
+
   protected-files:
     description: "Comma-separated list of file paths relative to nginx-config-directory-path that should be marked as protected. Example: 'ssl/private.key,conf.d/secrets.conf'"
     required: false
     default: ""
+
   debug:
     description: "Enable/Disable debug output."
     required: false
@@ -52,51 +66,67 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # If certificates were provided, normalize YAML/JSON -> compact JSON for the shell script
-    - name: Normalize certificates input (YAML/JSON ➜ JSON)
+    # --- Normalize nginx-certificates (YAML or JSON) to compact JSON for src script ---
+    - name: "Normalize certificates input to JSON"
       id: certs
       if: ${{ inputs.nginx-certificates != '' }}
       shell: bash
       run: |
         set -euo pipefail
-        echo "▶ Writing raw certificates input to certs.yaml"
-        printf "%s\n" "${{ inputs.nginx-certificates }}" > certs.yaml
+        IN="${{ inputs.nginx-certificates }}"
+        FMT="${{ inputs.certificates-format }}"
 
-        echo "▶ Downloading yq (static binary)"
-        case "$(uname -s)" in
-          Linux)  YQ_URL="https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64" ;;
-          Darwin) YQ_URL="https://github.com/mikefarah/yq/releases/latest/download/yq_darwin_amd64" ;;
-          *) echo "Unsupported OS"; exit 1 ;;
+        # If empty (shouldn't reach here due to if), emit empty array just in case
+        if [[ -z "${IN//[[:space:]]/}" ]]; then
+          echo "json=[]" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        compact_json () { jq -c . 2>/dev/null || return 1; }
+
+        # Parse YAML -> JSON using Ruby stdlib (available on ubuntu-latest)
+        parse_yaml_to_json () {
+          ruby -ryaml -rjson -e 'puts JSON.dump(YAML.safe_load(ARGF.read))'
+        }
+
+        case "$FMT" in
+          json)
+            printf '%s' "$IN" | compact_json | tee certs.json >/dev/null
+            ;;
+          yaml)
+            printf '%s' "$IN" | parse_yaml_to_json | compact_json | tee certs.json >/dev/null
+            ;;
+          *)
+            # auto-detect: treat as JSON if it starts with [ or { ; otherwise YAML
+            if printf '%s' "$IN" | grep -qE '^[[:space:]]*[\[\{]'; then
+              printf '%s' "$IN" | compact_json | tee certs.json >/dev/null
+            else
+              printf '%s' "$IN" | parse_yaml_to_json | compact_json | tee certs.json >/dev/null
+            fi
+            ;;
         esac
-        curl -sSLf "$YQ_URL" -o yq
-        chmod +x yq
 
-        echo "▶ Converting input to JSON (yq -o=json)"
-        ./yq -o=json '.' certs.yaml > certs.json
-
-        # Compact to one line for safe CLI passing
-        CERTS_JSON="$(tr -d '\n' < certs.json)"
-        echo "json=$CERTS_JSON" >> "$GITHUB_OUTPUT"
+        echo "json=$(cat certs.json)" >> "$GITHUB_OUTPUT"
 
     - name: "Synchronize NGINX certificate(s) from the Git repository to an NGINXaaS for Azure deployment"
       if: ${{ inputs.nginx-certificates != '' }}
       shell: bash
       run: ${{ github.action_path }}/src/deploy-certificate.sh \
-           --subscription-id=${{ inputs.subscription-id }} \
-           --resource-group-name=${{ inputs.resource-group-name }} \
-           --nginx-deployment-name=${{ inputs.nginx-deployment-name }} \
-           --certificates='${{ steps.certs.outputs.json }}' \
-           --debug=${{ inputs.debug }}
+            --subscription-id=${{ inputs.subscription-id }} \
+            --resource-group-name=${{ inputs.resource-group-name }} \
+            --nginx-deployment-name=${{ inputs.nginx-deployment-name }} \
+            --certificates='${{ steps.certs.outputs.json }}' \
+            --debug=${{ inputs.debug }}
 
     - name: "Synchronize NGINX configuration from the Git repository to an NGINXaaS for Azure deployment"
       if: ${{ inputs.nginx-config-directory-path != '' }}
       shell: bash
       run: ${{ github.action_path }}/src/deploy-config.sh \
-           --subscription-id=${{ inputs.subscription-id }} \
-           --resource-group-name=${{ inputs.resource-group-name }} \
-           --nginx-deployment-name=${{ inputs.nginx-deployment-name }} \
-           --nginx-config-directory-path=${{ inputs.nginx-config-directory-path }} \
-           --nginx-root-config-file=${{ inputs.nginx-root-config-file }} \
-           --transformed-nginx-config-directory-path=${{ inputs.transformed-nginx-config-directory-path }} \
-           --protected-files=${{ inputs.protected-files }} \
-           --debug=${{ inputs.debug }}
+            --subscription-id=${{ inputs.subscription-id }} \
+            --resource-group-name=${{ inputs.resource-group-name }} \
+            --nginx-deployment-name=${{ inputs.nginx-deployment-name }} \
+            --nginx-config-directory-path=${{ inputs.nginx-config-directory-path }} \
+            --nginx-root-config-file=${{ inputs.nginx-root-config-file }} \
+            --transformed-nginx-config-directory-path=${{ inputs.transformed-nginx-config-directory-path }} \
+            --protected-files=${{ inputs.protected-files }} \
+            --debug=${{ inputs.debug }}
